@@ -1,0 +1,3 @@
+
+ALTER TABLE transaction_start
+ADD COLUMN start_tag_id VARCHAR(255) NULL DEFAULT NULL;

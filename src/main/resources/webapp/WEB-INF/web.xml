@@ -1,0 +1,14 @@
+<web-app xmlns="http://xmlns.jcp.org/xml/ns/javaee"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://xmlns.jcp.org/xml/ns/javaee
+                             http://xmlns.jcp.org/xml/ns/javaee/web-app_3_1.xsd"
+         version="3.1">
+
+    <!-- Session audit listener -->
+    <listener>
+        <listener-class>
+            de.rwth.idsg.steve.config.SessionAuditListener
+        </listener-class>
+    </listener>
+
+</web-app>

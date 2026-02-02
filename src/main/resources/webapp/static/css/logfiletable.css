@@ -1,0 +1,31 @@
+ .dropdown {
+      float: left;
+      overflow: hidden;
+    }
+
+
+    .dropdown-content {
+      display: none;
+      position: absolute;
+      background-color: #f9f9f9;
+      min-width: 160px;
+      box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+      z-index: 1;
+    }
+
+    .dropdown-content a {
+        padding-left: 10px;
+        padding-right: 10px;
+        line-height: 35px;
+        text-decoration: none;
+        display: inline-block;
+        cursor: pointer;
+    }
+
+    .dropdown-content a:hover {
+      background-color: #ddd;
+    }
+
+    .dropdown:hover .dropdown-content {
+      display: block;
+    }

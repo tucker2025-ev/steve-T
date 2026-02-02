@@ -1,0 +1,2 @@
+ALTER TABLE transaction_start
+ADD COLUMN start_server VARCHAR(255) NULL DEFAULT NULL;
