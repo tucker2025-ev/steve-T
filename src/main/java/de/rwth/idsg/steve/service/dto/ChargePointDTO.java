@@ -1,6 +1,6 @@
 /*
  * SteVe - SteckdosenVerwaltung - https://github.com/steve-community/steve
- * Copyright (C) 2013-2025 SteVe Community Team
+ * Copyright (C) 2013-2026 SteVe Community Team
  * All Rights Reserved.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -26,7 +26,7 @@ import java.io.Serializable;
 @Getter
 @Setter
 public class ChargePointDTO implements Serializable {
-
+    private String chargerId;
     private String chargerQrCode;
     private String stationId;
     private String stationName;
@@ -39,17 +39,16 @@ public class ChargePointDTO implements Serializable {
     private String stationState;
     private String stationLongitude;
     private String stationLatitude;
-
-
-    // Fields that were not selected (commented out for clarity)
-    // private String invoice;
-    // private String masterId;
-    // private String parentId;
+    private String stationInvoice;
+    private String chargerType;
+    private Integer connectorNo;
+    private String connectorId;
 
     @Override
     public String toString() {
         return "ChargePointDTO{" +
-                "chargerQrCode='" + chargerQrCode + '\'' +
+                "chargerId='" + chargerId + '\'' +
+                ", chargerQrCode='" + chargerQrCode + '\'' +
                 ", stationId='" + stationId + '\'' +
                 ", stationName='" + stationName + '\'' +
                 ", stationMobile='" + stationMobile + '\'' +
@@ -59,6 +58,12 @@ public class ChargePointDTO implements Serializable {
                 ", stationPincode='" + stationPincode + '\'' +
                 ", stationCountry='" + stationCountry + '\'' +
                 ", stationState='" + stationState + '\'' +
+                ", stationLongitude='" + stationLongitude + '\'' +
+                ", stationLatitude='" + stationLatitude + '\'' +
+                ", stationInvoice='" + stationInvoice + '\'' +
+                ", chargerType='" + chargerType + '\'' +
+                ", connectorNo=" + connectorNo +
+                ", connectorId='" + connectorId + '\'' +
                 '}';
     }
 }

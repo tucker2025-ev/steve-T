@@ -23,6 +23,7 @@ import de.rwth.idsg.steve.repository.TransactionRepository;
 import de.rwth.idsg.steve.repository.dto.Transaction;
 import de.rwth.idsg.steve.service.dto.Tariff;
 import de.rwth.idsg.steve.service.dto.TariffResponse;
+import de.rwth.idsg.steve.service.dto.TariffSlice;
 import de.rwth.idsg.steve.web.controller.PaymentController;
 import de.rwth.idsg.steve.web.dto.TransactionQueryForm;
 import lombok.extern.slf4j.Slf4j;
@@ -39,6 +40,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 import static jooq.steve.db.Tables.*;
@@ -67,15 +70,15 @@ public class TariffAmountCalculation {
     @Autowired
     private ChargerFeeExceptUserService chargerFeeExceptUserService;
 
-    @Autowired
-    private PaymentController paymentController;
+    @Autowired private PaymentController paymentController;
+
+    @Autowired private LiveChargingTariffCalculation tariffCalculation;
 
     private static final String LIVE_TARIFF_API_URL = "http://cms.tuckerio.bigtot.in/test/tod.php?charger_id=";
     private static final String LIVE_WALLET_API_URL = "http://cms.tuckerio.bigtot.in/auto_charge/auto.php?idtag=";
 
     private static final String TEST_TARIFF_API_URL = "https://tuckerio.com/test/tod.php?charger_id=";
     private static final String TEST_WALLET_API_URL = "https://tuckerio.com/auto_charge/auto.php?idtag=";
-
 
     private static final DateTimeFormatter TIME_ONLY_FORMATTER = DateTimeFormat.forPattern("HH:mm:ss");
     private static final DateTimeZone IST = DateTimeZone.forID("Asia/Kolkata");
@@ -84,7 +87,7 @@ public class TariffAmountCalculation {
     private double round2(double value) {
         return Math.round(value * 100.0) / 100.0;
     }
-
+    private final Map<Integer, DateTime> txStartCache = new ConcurrentHashMap<>();
 
     /**
      * Core method: called for each incoming MeterValues reading (~ every 30 sec)
@@ -96,86 +99,130 @@ public class TariffAmountCalculation {
                                   final Integer transactionId,
                                   final Integer connectorPk) {
 
-
         if (check(lastEnergy, chargeBoxId, transactionId, connectorPk)) {
             return;
         }
-        double unitFare = getUnitFareFromUtcTime(chargeBoxId, latestTimestamp);
+
         double previousEnergy = retrieveCurrentTransactionPreviewsEnergy(connectorPk, transactionId);
+        DateTime previousTimestamp =
+                tariffCalculation.retrievePreviousMeterTimestamp(connectorPk, transactionId);
         double walletBalance = retrieveUserWalletAmount(idTag);
 
-        double consumedEnergy = (lastEnergy - previousEnergy) / 1000.0;
+        // ---------------- ENERGY DELTA ----------------
+        double consumedEnergyTotal = (lastEnergy - previousEnergy) / 1000.0;
 
-        double baseCost = consumedEnergy * unitFare;
-        double gstCost = baseCost * 0.18;
-        double consumedAmount = baseCost + gstCost;
-
-        double previousTotal = previousConsumedAmount(transactionId);
-        double updateConsumedAmount = previousTotal + consumedAmount;
-        double totalConsumedAmount = previousTotalConsumedAmount(transactionId) + consumedAmount;
-
-        if (isIdTagIsAlreadyTransaction(idTag)) {
-            if (isQrPaymentUser(idTag)) {
-                if (paymentController.isDcCharger(chargeBoxId, 1)) {
-                    if ((totalConsumedAmount + 8) > walletBalance) {
-                        stopTransaction.manuallyStopTransaction(chargeBoxId, transactionId, "Charging Finished");
-                    }
-                } else if (totalConsumedAmount > walletBalance) {
-                    stopTransaction.manuallyStopTransaction(chargeBoxId, transactionId, "Charging Finished");
-                }
-
-            } else if ((totalConsumedAmount + 30) >= walletBalance) {
-                if (!chargerFeeExceptUserService.liveChargerFeeExceptUser(idTag, chargeBoxId)) {
-                    stopTransaction.manuallyStopTransaction(chargeBoxId, transactionId, "Low Wallet");
-                }
-            }
-        } else {
-            List<Integer> activeTxIds = getActiveTransactionIds(idTag);
-            double totalConsumedAmountMultiTransaction = 0;
-
-            for (Integer txId : activeTxIds) {
-                totalConsumedAmountMultiTransaction += previousTotalConsumedAmount(txId);
-            }
-
-
-            if ((totalConsumedAmountMultiTransaction + 30) >= walletBalance) {
-                List<Integer> activeTxId = getActiveTransactionIds(idTag);
-                for (Integer txId : activeTxId) {
-                    String chargerId = fetchCurrentlyChargingPointsForIdTag(txId);
-                    stopTransaction.manuallyStopTransaction(chargerId, txId, "Low Wallet");
-                }
-            }
-
-
+        if (consumedEnergyTotal <= 0) {
+            log.info("Energy delta zero. Skipping tariff.");
+            return;
         }
 
+        // ---------------- TARIFF SPLIT ----------------
+        List<TariffSlice> slices =
+                tariffCalculation.splitByTariff(
+                        chargeBoxId,
+                        previousTimestamp,
+                        latestTimestamp,
+                        consumedEnergyTotal
+                );
 
-        if (isAnotherTariff(transactionId, unitFare)) {
-            log.info("Tariff changed → insert new tariff record : consumedAmount = " + consumedAmount + " , totalConsumedAmount = " + totalConsumedAmount);
+        // ---------------- FIX ROUNDING DRIFT ----------------
+        double sliceSum = slices.stream()
+                .mapToDouble(s -> s.energy)
+                .sum();
 
-            insertChargerTariffAmountAgeignestTransactionIdData(
+        double diff = consumedEnergyTotal - sliceSum;
+
+        // push rounding difference to last slice
+        if (!slices.isEmpty() && Math.abs(diff) > 0.0001) {
+            TariffSlice lastSlice = slices.get(slices.size() - 1);
+            lastSlice.energy += diff;
+        }
+
+        // ---------------- PROCESS SLICES ----------------
+        for (TariffSlice slice : slices) {
+
+            Tariff tariff = slice.tariff;
+
+            double unitFare = tariff.getUnit_fare();
+            double consumedEnergy = slice.energy; // NOW EXACT MATCH WITH WALLET
+
+            double baseCost = consumedEnergy * unitFare;
+            double gstCost = baseCost * 0.18;
+            double consumedAmount = baseCost + gstCost;
+
+            double previousTotal = previousConsumedAmount(transactionId);
+            double updateConsumedAmount = previousTotal + consumedAmount;
+            double totalConsumedAmount = previousTotalConsumedAmount(transactionId) + consumedAmount;
+
+            // ---------------- WALLET STOP LOGIC ----------------
+            if (isIdTagIsAlreadyTransaction(idTag)) {
+                if (isQrPaymentUser(idTag)) {
+                    if (paymentController.isDcCharger(chargeBoxId, 1)) {
+                        if ((totalConsumedAmount + 8) > walletBalance) {
+                            stopTransaction.manuallyStopTransaction(chargeBoxId, transactionId, "Charging Finished");
+                        }
+                    } else if (totalConsumedAmount > walletBalance) {
+                        stopTransaction.manuallyStopTransaction(chargeBoxId, transactionId, "Charging Finished");
+                    }
+
+                } else if ((totalConsumedAmount + 30) >= walletBalance) {
+                    if (!chargerFeeExceptUserService.testChargerFeeExceptUser(idTag, chargeBoxId)) {
+                        stopTransaction.manuallyStopTransaction(chargeBoxId, transactionId, "Low Wallet");
+                    }
+                }
+            } else {
+                List<Integer> activeTxIds = getActiveTransactionIds(idTag);
+                double totalConsumedAmountMultiTransaction = 0;
+
+                for (Integer txId : activeTxIds) {
+                    totalConsumedAmountMultiTransaction += previousTotalConsumedAmount(txId);
+                }
+
+                if ((totalConsumedAmountMultiTransaction + 30) >= walletBalance) {
+                    for (Integer txId : activeTxIds) {
+                        String chargerId = fetchCurrentlyChargingPointsForIdTag(txId);
+                        stopTransaction.manuallyStopTransaction(chargerId, txId, "Low Wallet");
+                    }
+                }
+            }
+
+            // ---------------- DB INSERT / UPDATE ----------------
+            if (isAnotherTariff(transactionId, unitFare)) {
+
+                insertChargerTariffAmountAgeignestTransactionIdData(
+                        transactionId,
+                        previousEnergy,
+                        lastEnergy,
+                        idTag,
+                        unitFare,
+                        walletBalance,
+                        consumedEnergy,
+                        consumedAmount,
+                        totalConsumedAmount,
+                        latestTimestamp
+                );
+
+            } else {
+
+                updateConsumedAmount(
+                        transactionId,
+                        unitFare,
+                        lastEnergy,
+                        updateConsumedAmount,
+                        totalConsumedAmount,
+                        latestTimestamp,
+                        walletBalance
+                );
+            }
+
+            // ---------------- LIVE PAYLOAD ----------------
+            tariffCalculation.buildLiveChargingPayload(
                     transactionId,
-                    previousEnergy,
-                    lastEnergy,
-                    idTag,
-                    unitFare,
-                    walletBalance,
+                    chargeBoxId,
+                    tariff,
                     consumedEnergy,
-                    consumedAmount,
-                    totalConsumedAmount,
-                    latestTimestamp
-            );
-
-        } else {
-            log.info("Tariff same  update existing tariff record : consumedAmount = " + consumedAmount + " , totalConsumedAmount = " + totalConsumedAmount);
-
-            updateConsumedAmount(
-                    transactionId,
-                    unitFare,
-                    lastEnergy,
-                    updateConsumedAmount,
-                    totalConsumedAmount,
-                    latestTimestamp, walletBalance
+                    slice.start,
+                    slice.end
             );
         }
     }
@@ -193,7 +240,6 @@ public class TariffAmountCalculation {
                 .where(CONNECTOR.CONNECTOR_PK.eq(connectorPk))
                 .fetchOne(CONNECTOR.CHARGE_BOX_ID);
     }
-
 
     private double previousConsumedAmount(final Integer transactionId) {
         Double consumed = dslContext
@@ -253,7 +299,6 @@ public class TariffAmountCalculation {
 
         return startEnergy != null ? startEnergy : 0.0;
     }
-
 
     /**
      * Insert new record when tariff changes
@@ -320,7 +365,7 @@ public class TariffAmountCalculation {
     /**
      * Helper: fetch tariff from external API
      */
-    private TariffResponse fetchTariffResponse(String chargerId) {
+    public TariffResponse fetchTariffResponse(String chargerId) {
         try {
             String url = TEST_TARIFF_API_URL + chargerId;
             TariffResponse response = restTemplate.getForObject(url, TariffResponse.class);
@@ -399,7 +444,6 @@ public class TariffAmountCalculation {
         return count != null && count == 1;
     }
 
-
     private List<Integer> getActiveTransactionIds(final String idTag) {
         TransactionQueryForm form = new TransactionQueryForm();
         form.setChargeBoxId(null);
@@ -420,7 +464,6 @@ public class TariffAmountCalculation {
                 .map(Transaction::getId)
                 .collect(Collectors.toList());
     }
-
 
     private boolean isQrPaymentUser(final String rrnId) {
 
@@ -490,6 +533,5 @@ public class TariffAmountCalculation {
                 .map(Double::parseDouble)
                 .orElse(0.0);
     }
-
 
 }

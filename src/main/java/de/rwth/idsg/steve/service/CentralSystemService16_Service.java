@@ -63,6 +63,7 @@ public class CentralSystemService16_Service {
     private LiveChargingData liveChargingData;
     @Autowired
     private TestChargingData testChargingData;
+    @Autowired private LiveChargingRuntimeService runtimeService;
 
     @Autowired
     private DSLContext dslContext;
@@ -183,7 +184,7 @@ public class CentralSystemService16_Service {
         int transactionId = ocppServerRepository.insertTransaction(params);
         applicationEventPublisher.publishEvent(new OcppTransactionStarted(transactionId, params));
         try {
-            liveChargingData.liveChargingData(chargeBoxIdentity, params.getConnectorId(), transactionId, params.getIdTag());
+            testChargingData.liveChargingData(chargeBoxIdentity, params.getConnectorId(), transactionId, params.getIdTag());
         } catch (Exception e) {
             log.error("Central System Service 16 Service Exception occur : " + e.getMessage());
         }
@@ -221,6 +222,8 @@ public class CentralSystemService16_Service {
         ocppServerRepository.insertMeterValues(chargeBoxIdentity, parameters.getTransactionData(), transactionId);
 
         applicationEventPublisher.publishEvent(new OcppTransactionEnded(params));
+
+        runtimeService.removeRuntimeData(transactionId);
 
         if (idTagInfo != null) {
             return new StopTransactionResponse().withIdTagInfo(idTagInfo);

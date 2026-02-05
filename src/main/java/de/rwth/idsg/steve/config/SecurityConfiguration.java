@@ -112,18 +112,14 @@ public class SecurityConfiguration {
                 .authorizeHttpRequests(
                         req -> req.antMatchers(prefix + "/**").hasRole("ADMIN")
                 )
-                .formLogin(
-                        req -> req
-                                .loginPage(prefix + "/signin")
-                                .successHandler(loginSuccessHandler)
-                                .permitAll()
+                .sessionManagement(
+                        req -> req.invalidSessionUrl(prefix + "/signin")
                 )
-                .logout(logout -> logout
-                        .logoutUrl(prefix + "/signout")
-                        .logoutSuccessHandler(logoutHandler)
-                        .invalidateHttpSession(true)
-                        .clearAuthentication(true)
-                        .deleteCookies("JSESSIONID")
+                .formLogin(
+                        req -> req.loginPage(prefix + "/signin").permitAll()
+                )
+                .logout(
+                        req -> req.logoutUrl(prefix + "/signout")
                 )
                 .build();
     }

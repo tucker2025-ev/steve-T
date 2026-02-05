@@ -426,7 +426,7 @@ public class ScheduleChargingService {
             HttpEntity<String> request = new HttpEntity<>(json, headers);
 
             ResponseEntity<String> response =
-                    restTemplate.postForEntity(LIVE_API_URL, request, String.class);
+                    restTemplate.postForEntity(TEST_API_URL, request, String.class);
 
         } catch (Exception e) {
             log.error("SendNotification Error Occur : ");
