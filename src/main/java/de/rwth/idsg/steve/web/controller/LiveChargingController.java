@@ -18,8 +18,8 @@
  */
 package de.rwth.idsg.steve.web.controller;
 
-import de.rwth.idsg.steve.service.LiveChargingService;
-import de.rwth.idsg.steve.service.dto.LiveChargingResponse;
+import de.rwth.idsg.steve.service.LiveTransactionService;
+import de.rwth.idsg.steve.service.dto.LiveTransactionDTO;
 import de.rwth.idsg.steve.web.dto.LiveChargingApiResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,7 +28,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-
 import java.util.List;
 
 @RestController
@@ -37,13 +36,14 @@ import java.util.List;
 public class LiveChargingController {
 
     @Autowired
-    private LiveChargingService liveChargingService;
+    private LiveTransactionService liveTransactionService;
 
     @GetMapping("/live-charging")
     public ResponseEntity<LiveChargingApiResponse> getLiveCharging() {
+
         try {
-            List<LiveChargingResponse> responses =
-                    liveChargingService.getLiveChargingResponses();
+            List<LiveTransactionDTO> responses =
+                    liveTransactionService.getLiveTransactions();
 
             if (responses.isEmpty()) {
                 return ResponseEntity.ok(

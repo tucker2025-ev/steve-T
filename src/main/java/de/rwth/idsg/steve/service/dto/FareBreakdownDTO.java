@@ -16,24 +16,20 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-package de.rwth.idsg.steve.web.dto;
+package de.rwth.idsg.steve.service.dto;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
-import de.rwth.idsg.steve.service.dto.LiveChargingResponse;
-import de.rwth.idsg.steve.service.dto.LiveTransactionDTO;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.util.List;
-import java.util.Map;
-
 @Data
 @AllArgsConstructor
 @NoArgsConstructor
-public class LiveChargingApiResponse {
+public class FareBreakdownDTO {
 
-    private String status;
-    private List<LiveTransactionDTO> message;
-
+    private double unitFare;
+    private double totalUnits;
+    private double totalCost;
+    private String startTimestamp;
+    private String endTimestamp;
 }
