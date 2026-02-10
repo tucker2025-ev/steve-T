@@ -48,13 +48,14 @@ public class LiveTransactionService {
     @Qualifier("php")
     private DSLContext php;
 
-    @Autowired private DSLContext dsl;
+    @Autowired
+    private DSLContext dsl;
 
     public List<LiveTransactionDTO> getLiveTransactions() {
 
         List<LiveTransactionDTO> list = new ArrayList<>();
 
-        // ------------------ FETCH INTERVAL + MASTER DATA ------------------
+        // ------------------ FETCH ALL ACTIVE TRANSACTIONS WITH DETAILS ------------------
         Result<?> records = secondary.select(
                         DSL.field("w.transaction_id").as("transaction_id"),
                         DSL.field("w.start_timestamp").as("interval_start"),
@@ -88,8 +89,21 @@ public class LiveTransactionService {
                 .leftJoin("ev_history.live_full_details f")
                 .on(DSL.field("w.transaction_id").eq(DSL.field("f.transaction_id")))
                 .where(DSL.field("w.is_active_transaction", Integer.class).eq(1))
-                .orderBy(DSL.field("w.transaction_id"), DSL.field("w.start_timestamp"))
                 .fetch();
+
+        if (records.isEmpty()) return list;
+
+        // ------------------ PREFETCH TRANSACTION COUNTS PER IDTAG ------------------
+        Map<String, Integer> txCountMap = dsl.select(DSL.field("id_tag"), DSL.count())
+                .from("stevedb.transaction")
+                .where(DSL.field("id_tag").in(
+                        records.stream()
+                                .map(r -> r.get("id_tag", String.class))
+                                .filter(Objects::nonNull)
+                                .collect(Collectors.toSet())
+                ))
+                .groupBy(DSL.field("id_tag"))
+                .fetchMap(r -> r.get("id_tag", String.class), r -> r.get(1, Integer.class));
 
         // ------------------ GROUP BY TRANSACTION ------------------
         Map<Integer, List<Record>> grouped = records.stream()
@@ -109,10 +123,10 @@ public class LiveTransactionService {
             Record first = intervals.get(0);
             Record last  = intervals.get(intervals.size() - 1);
 
-            String idTag = first.get("id_tag", String.class);
+            String idTag = safe(first, "id_tag", "N/A");
 
             // ---------------- TRANSACTION COUNT + RANK ----------------
-            int transactionCount = fetchTransactionCount(idTag);
+            int transactionCount = txCountMap.getOrDefault(idTag, 0);
             String rank = calculateRank(transactionCount);
 
             // ---------------- METRICS ----------------
@@ -122,9 +136,7 @@ public class LiveTransactionService {
             double current  = getDouble(last, "last_current");
             double power    = getDouble(last, "last_power");
 
-            // =====================================================
-            //                  FARE BREAKDOWN
-            // =====================================================
+            // ---------------- FARE BREAKDOWN ----------------
             List<FareBreakdownDTO> fareBreakdown = new ArrayList<>();
             double totalUnits = 0.0;
             double totalCost  = 0.0;
@@ -135,7 +147,6 @@ public class LiveTransactionService {
             Timestamp intervalEndTs   = intervals.get(0).get("interval_stop", Timestamp.class);
 
             for (int i = 1; i < intervals.size(); i++) {
-
                 Record in = intervals.get(i);
                 double tariff = getDouble(in, "tariff_amount");
                 double units  = getDouble(in, "consumed_energy");
@@ -147,13 +158,9 @@ public class LiveTransactionService {
                     currentUnits += units;
                     intervalEndTs = stopTs;
                 } else {
-
                     double cost = roundDouble(currentUnits * currentFare, 2);
-
                     fareBreakdown.add(new FareBreakdownDTO(
-                            currentFare,
-                            currentUnits,
-                            cost,
+                            currentFare, currentUnits, cost,
                             formatTs(intervalStartTs),
                             formatTs(intervalEndTs)
                     ));
@@ -170,15 +177,11 @@ public class LiveTransactionService {
 
             // -------- LAST INTERVAL --------
             double lastCost = roundDouble(currentUnits * currentFare, 2);
-
             fareBreakdown.add(new FareBreakdownDTO(
-                    currentFare,
-                    currentUnits,
-                    lastCost,
+                    currentFare, currentUnits, lastCost,
                     formatTs(intervalStartTs),
                     formatTs(intervalEndTs)
             ));
-
             totalUnits += currentUnits;
             totalCost  += lastCost;
 
@@ -189,7 +192,6 @@ public class LiveTransactionService {
             // ---------------- TIME ----------------
             Timestamp startTs = first.get("interval_start", Timestamp.class);
             Timestamp stopTs  = last.get("interval_stop", Timestamp.class);
-
             long totalSeconds = (startTs != null && stopTs != null)
                     ? (stopTs.getTime() - startTs.getTime()) / 1000
                     : 0;
@@ -200,7 +202,6 @@ public class LiveTransactionService {
 
             // ---------------- DTO BUILD ----------------
             LiveTransactionDTO dto = new LiveTransactionDTO();
-
             dto.setTransactionId(String.valueOf(transactionId));
             dto.setIdtag(idTag);
             dto.setTransactionCount(transactionCount);
@@ -238,7 +239,7 @@ public class LiveTransactionService {
             dto.setBaseFare("0.00");
             dto.setRazorpayAmount("0.00");
             dto.setStartTime(startTs != null ? new DateTime(startTs.getTime(), DateTimeZone.forID("Asia/Kolkata"))
-                            .toString("yyyy-MM-dd HH:mm:ss") : "");
+                    .toString("yyyy-MM-dd HH:mm:ss") : "");
             dto.setTimeConsumed(formatTime(totalSeconds));
             dto.setTotalTime(totalSeconds);
             dto.setUnitFare(unitFareStr);
@@ -249,6 +250,7 @@ public class LiveTransactionService {
         return list;
     }
 
+    // ------------------ HELPERS ------------------
     private String safe(Record r, String col, String defaultVal) {
         if (r == null) return defaultVal;
         Object v = r.get(col);
@@ -262,16 +264,6 @@ public class LiveTransactionService {
 
     private double roundDouble(double value, int precision) {
         return new BigDecimal(value).setScale(precision, RoundingMode.HALF_UP).doubleValue();
-    }
-
-    private int fetchTransactionCount(String idTag) {
-
-        Integer count = dsl.selectCount()
-                .from("stevedb.transaction")
-                .where(DSL.field("id_tag").eq(idTag))
-                .fetchOne(0, Integer.class);
-
-        return count != null ? count : 0;
     }
 
     private String calculateRank(int count) {
@@ -294,6 +286,7 @@ public class LiveTransactionService {
         return String.format("%02dHr:%02dMin:%02dSec", hours, minutes, seconds);
     }
 }
+
 
 
 
