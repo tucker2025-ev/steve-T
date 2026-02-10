@@ -57,6 +57,7 @@ public class LiveChargingController {
 
         } catch (Exception e) {
             log.error("Error fetching live charging data", e);
+            System.out.println("Exception : " + e.getMessage());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(new LiveChargingApiResponse("false", List.of()));
         }

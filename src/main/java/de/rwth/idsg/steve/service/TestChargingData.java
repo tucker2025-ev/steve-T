@@ -46,7 +46,6 @@ public class TestChargingData {
     private DSLContext php;
 
     @Autowired DSLContext ctx;
-    @Autowired private LiveChargingRuntimeService runtimeService;
 
     private static final Table<?> CHARGE_POINT_VIEW = DSL.table("bigtot_cms.view_charger_station");
 
@@ -96,168 +95,123 @@ public class TestChargingData {
                                  final Integer transactionId,
                                  final String idTag) {
 
+        // Fetch ChargePointDTO safely
+        ChargePointDTO chargePointDTO = php
+                .select(
+                        CHARGER_ID.as("chargerId"), CHARGER_QR_CODE.as("chargerQrCode"), CONNECTOR_NO.as("connectorNo"),
+                        CONNECTOR_ID.as("connectorId"),
+                        CHARGER_TYPE.as("chargerType"),
+                        STATION_ID, STATION_NAME, STATION_MOBILE, CPO_ID,
+                        STATION_ADDRESS_ONE, STATION_ADDRESS_TWO, STATION_INVOICE,
+                        STATION_PINCODE, STATION_COUNTRY, STATION_STATE,
+                        STATION_LATITUDE, STATION_LONGITUDE
+                )
+                .from(CHARGE_POINT_VIEW)
+                .where(DSL.upper(CHARGER_ID).eq(chargeBoxId.trim().toUpperCase()))
+                .and(CONNECTOR_NO.eq(connectorId))
+                .fetchOneInto(ChargePointDTO.class);
+
+        if (chargePointDTO == null) {
+            log.warn("Charge point not found. chargeBoxId={}, connectorId={}",
+                    chargeBoxId, connectorId);
+            return;
+        }
+
+        /* -------------------------------------------------
+         * Fetch User & Vehicle Details (may be empty)
+         * ------------------------------------------------- */
+        List<UserDTO> users = php
+                .select(NAME, CMS_ID, EMAIL, MOBILE_NUMBER, WALLET_AMOUNT,
+                        ADDRESS_ONE, ADDRESS_TWO, CITY, STATE, COUNTRY, IS_DEFAULT)
+                .from(USER_AND_VEHICLE_DETAILS_VIEW)
+                .where(IDTAG.eq(idTag))
+                .fetchInto(UserDTO.class);
+
+        List<VehicleDTO> vehicles = php
+                .select(VEHICLE_NAME, VEHICLE_NUMBER, VEHICLE_MODEL,
+                        VEHICLE_TYPE, VEHICLE_IMG_URL, VEHICLE_HUB_IMAGE, IS_DEFAULT)
+                .from(USER_AND_VEHICLE_DETAILS_VIEW)
+                .where(IDTAG.eq(idTag))
+                .fetchInto(VehicleDTO.class);
+
+        /* -------------------------------------------------
+         * Resolve User (Guest fallback)
+         * ------------------------------------------------- */
+        UserDTO userDTO;
+        if (users.isEmpty() || users.get(0).getName() == null) {
+            userDTO = guestUser();
+        } else {
+            userDTO = users.stream()
+                    .filter(u -> Boolean.TRUE.equals(u.isDefault()))
+                    .findFirst()
+                    .orElse(users.get(0));
+        }
+
+        /* -------------------------------------------------
+         * Resolve Vehicle (Guest fallback)
+         * ------------------------------------------------- */
+        VehicleDTO vehicleDTO;
+        if (vehicles.isEmpty() || vehicles.get(0).getName() == null) {
+            vehicleDTO = guestVehicle();
+        } else {
+            vehicleDTO = vehicles.stream()
+                    .filter(v -> Boolean.TRUE.equals(v.isDefault()))
+                    .findFirst()
+                    .orElse(vehicles.get(0));
+        }
+
+        if (users.isEmpty()) {
+            log.info("Guest / UPI charging detected. idTag={}, txId={}", idTag, transactionId);
+        }
         try {
-            // Get transaction count
-            Integer transactionCount = ctx
-                    .selectCount()
-                    .from(TRANSACTION)
-                    .where(TRANSACTION.ID_TAG.eq(idTag))
-                    .fetchOne(0, Integer.class);
+            // ---------------- INSERT OR UPDATE LIVE DATA ----------------
+            secondary.insertInto(LIVE_CHARGING_DATA)
+                    .set(LIVE_CHARGING_DATA.CHARGE_BOX_ID, chargeBoxId)
+                    .set(LIVE_CHARGING_DATA.CONNECTOR_ID, connectorId)
+                    .set(LIVE_CHARGING_DATA.TRANSACTION_ID, transactionId)
+                    .set(LIVE_CHARGING_DATA.ID_TAG, idTag)
 
-            if (transactionCount == null) transactionCount = 0;
-            Integer finalTransactionCount = transactionCount;
+                    // Charge point info
+                    .set(LIVE_CHARGING_DATA.CHARGER_QR_CODE, chargePointDTO.getChargerQrCode())
+                    .set(LIVE_CHARGING_DATA.STATION_ID, chargePointDTO.getStationId())
+                    .set(LIVE_CHARGING_DATA.STATION_NAME, chargePointDTO.getStationName())
+                    .set(LIVE_CHARGING_DATA.STATION_MOBILE, chargePointDTO.getStationMobile())
+                    .set(LIVE_CHARGING_DATA.CPO_ID, chargePointDTO.getCpoId())
+                    .set(LIVE_CHARGING_DATA.STATION_ADDRESS_ONE, chargePointDTO.getStationAddressOne())
+                    .set(LIVE_CHARGING_DATA.STATION_ADDRESS_TWO, chargePointDTO.getStationAddressTwo())
+                    .set(LIVE_CHARGING_DATA.STATION_STATE, chargePointDTO.getStationState())
+                    .set(LIVE_CHARGING_DATA.STATION_INVOICE, chargePointDTO.getStationInvoice())
+                    .set(LIVE_CHARGING_DATA.STATION_COUNTRY, chargePointDTO.getStationCountry())
+                    .set(LIVE_CHARGING_DATA.STATION_LATITUDE, chargePointDTO.getStationLatitude())
+                    .set(LIVE_CHARGING_DATA.STATION_LONGITUDE, chargePointDTO.getStationLongitude())
 
-            secondary.transaction(conf -> {
-                DSLContext tx = DSL.using(conf);
+                    // User info
+                    .set(LIVE_CHARGING_DATA.USER_NAME, userDTO.getName())
+                    .set(LIVE_CHARGING_DATA.USER_CMS_ID, userDTO.getCmsId())
+                    .set(LIVE_CHARGING_DATA.USER_EMAIL, userDTO.getEmail())
+                    .set(LIVE_CHARGING_DATA.USER_MOBILE_NO, userDTO.getMobile())
+                    .set(LIVE_CHARGING_DATA.USER_WALLET_AMOUNT, userDTO.getWalletAmount())
+                    .set(LIVE_CHARGING_DATA.USER_CITY, userDTO.getCity())
+                    .set(LIVE_CHARGING_DATA.USER_STATE, userDTO.getState())
+                    .set(LIVE_CHARGING_DATA.USER_COUNTRY, userDTO.getCountry())
+                    .set(LIVE_CHARGING_DATA.USER_ADDRESS_ONE, userDTO.getAddressOne())
 
-                boolean exists = tx.fetchExists(
-                        tx.selectOne()
-                                .from(LIVE_CHARGING_DATA)
-                                .where(LIVE_CHARGING_DATA.TRANSACTION_ID.eq(transactionId))
-                );
+                    // Vehicle info
+                    .set(LIVE_CHARGING_DATA.CHARGING_VEHICLE_NAME, vehicleDTO != null ? vehicleDTO.getName() : null)
+                    .set(LIVE_CHARGING_DATA.CHARGING_VEHICLE_NUMBER, vehicleDTO != null ? vehicleDTO.getNumber() : null)
+                    .set(LIVE_CHARGING_DATA.CHARGING_VEHICLE_MODEL, vehicleDTO != null ? vehicleDTO.getModel() : null)
+                    .set(LIVE_CHARGING_DATA.CHARGING_VEHICLE_TYPE, vehicleDTO != null ? vehicleDTO.getType() : null)
+                    .set(LIVE_CHARGING_DATA.CHARGING_VEHICLE_IMG_URL, vehicleDTO != null ? vehicleDTO.getImgUrl() : null)
+                    .set(LIVE_CHARGING_DATA.CHARGING_VEHICLE_HUB_IMAGE, vehicleDTO != null ? vehicleDTO.getHubImage() : null)
+                    .onDuplicateKeyIgnore()
+                    .execute();
 
-                if (exists) {
-                    log.info("Live charging row already exists for txId={}", transactionId);
-                    return;
-                }
-
-                // Use transactionCount here for rank, inserts, etc.
-                String rank = runtimeService.resolveUserRank(finalTransactionCount);
-
-                // Fetch ChargePointDTO safely
-                ChargePointDTO chargePointDTO = php
-                        .select(
-                                CHARGER_ID.as("chargerId"), CHARGER_QR_CODE.as("chargerQrCode"), CONNECTOR_NO.as("connectorNo"),
-                                CONNECTOR_ID.as("connectorId"),
-                                CHARGER_TYPE.as("chargerType"),
-                                STATION_ID, STATION_NAME, STATION_MOBILE, CPO_ID,
-                                STATION_ADDRESS_ONE, STATION_ADDRESS_TWO, STATION_INVOICE,
-                                STATION_PINCODE, STATION_COUNTRY, STATION_STATE,
-                                STATION_LATITUDE, STATION_LONGITUDE
-                        )
-                        .from(CHARGE_POINT_VIEW)
-                        .where(DSL.upper(CHARGER_ID).eq(chargeBoxId.trim().toUpperCase()))
-                        .and(CONNECTOR_NO.eq(connectorId))
-                        .fetchOneInto(ChargePointDTO.class);
-
-                if (chargePointDTO == null) {
-                    log.warn("Charge point not found. chargeBoxId={}, connectorId={}",
-                            chargeBoxId, connectorId);
-                    return;
-                }
-
-                runtimeService.putRuntimeData(
-                        transactionId,
-                        new LiveChargingRuntimeData(
-                                transactionId,
-                                finalTransactionCount,
-                                rank,
-                                "Normal",
-                                runtimeService.mapChargerType(chargePointDTO.getChargerType()),
-                                chargePointDTO.getConnectorNo()
-                        )
-                );
-
-                /* -------------------------------------------------
-                 * Fetch User & Vehicle Details (may be empty)
-                 * ------------------------------------------------- */
-                List<UserDTO> users = php
-                        .select(NAME, CMS_ID, EMAIL, MOBILE_NUMBER, WALLET_AMOUNT,
-                                ADDRESS_ONE, ADDRESS_TWO, CITY, STATE, COUNTRY, IS_DEFAULT)
-                        .from(USER_AND_VEHICLE_DETAILS_VIEW)
-                        .where(IDTAG.eq(idTag))
-                        .fetchInto(UserDTO.class);
-
-                List<VehicleDTO> vehicles = php
-                        .select(VEHICLE_NAME, VEHICLE_NUMBER, VEHICLE_MODEL,
-                                VEHICLE_TYPE, VEHICLE_IMG_URL, VEHICLE_HUB_IMAGE, IS_DEFAULT)
-                        .from(USER_AND_VEHICLE_DETAILS_VIEW)
-                        .where(IDTAG.eq(idTag))
-                        .fetchInto(VehicleDTO.class);
-
-                /* -------------------------------------------------
-                 * Resolve User (Guest fallback)
-                 * ------------------------------------------------- */
-                UserDTO userDTO;
-                if (users.isEmpty() || users.get(0).getName() == null) {
-                    userDTO = guestUser();
-                } else {
-                    userDTO = users.stream()
-                            .filter(u -> Boolean.TRUE.equals(u.isDefault()))
-                            .findFirst()
-                            .orElse(users.get(0));
-                }
-
-                /* -------------------------------------------------
-                 * Resolve Vehicle (Guest fallback)
-                 * ------------------------------------------------- */
-                VehicleDTO vehicleDTO;
-                if (vehicles.isEmpty() || vehicles.get(0).getName() == null) {
-                    vehicleDTO = guestVehicle();
-                } else {
-                    vehicleDTO = vehicles.stream()
-                            .filter(v -> Boolean.TRUE.equals(v.isDefault()))
-                            .findFirst()
-                            .orElse(vehicles.get(0));
-                }
-
-                if (users.isEmpty()) {
-                    log.info("Guest / UPI charging detected. idTag={}, txId={}", idTag, transactionId);
-                }
-                try {
-                    // ---------------- INSERT OR UPDATE LIVE DATA ----------------
-                    secondary.insertInto(LIVE_CHARGING_DATA)
-                            .set(LIVE_CHARGING_DATA.CHARGE_BOX_ID, chargeBoxId)
-                            .set(LIVE_CHARGING_DATA.CONNECTOR_ID, connectorId)
-                            .set(LIVE_CHARGING_DATA.TRANSACTION_ID, transactionId)
-                            .set(LIVE_CHARGING_DATA.ID_TAG, idTag)
-
-                            // Charge point info
-                            .set(LIVE_CHARGING_DATA.CHARGER_QR_CODE, chargePointDTO.getChargerQrCode())
-                            .set(LIVE_CHARGING_DATA.STATION_ID, chargePointDTO.getStationId())
-                            .set(LIVE_CHARGING_DATA.STATION_NAME, chargePointDTO.getStationName())
-                            .set(LIVE_CHARGING_DATA.STATION_MOBILE, chargePointDTO.getStationMobile())
-                            .set(LIVE_CHARGING_DATA.CPO_ID, chargePointDTO.getCpoId())
-                            .set(LIVE_CHARGING_DATA.STATION_ADDRESS_ONE, chargePointDTO.getStationAddressOne())
-                            .set(LIVE_CHARGING_DATA.STATION_ADDRESS_TWO, chargePointDTO.getStationAddressTwo())
-                            .set(LIVE_CHARGING_DATA.STATION_STATE, chargePointDTO.getStationState())
-                            .set(LIVE_CHARGING_DATA.STATION_INVOICE, chargePointDTO.getStationInvoice())
-                            .set(LIVE_CHARGING_DATA.STATION_COUNTRY, chargePointDTO.getStationCountry())
-                            .set(LIVE_CHARGING_DATA.STATION_LATITUDE, chargePointDTO.getStationLatitude())
-                            .set(LIVE_CHARGING_DATA.STATION_LONGITUDE, chargePointDTO.getStationLongitude())
-
-                            // User info
-                            .set(LIVE_CHARGING_DATA.USER_NAME, userDTO.getName())
-                            .set(LIVE_CHARGING_DATA.USER_CMS_ID, userDTO.getCmsId())
-                            .set(LIVE_CHARGING_DATA.USER_EMAIL, userDTO.getEmail())
-                            .set(LIVE_CHARGING_DATA.USER_MOBILE_NO, userDTO.getMobile())
-                            .set(LIVE_CHARGING_DATA.USER_WALLET_AMOUNT, userDTO.getWalletAmount())
-                            .set(LIVE_CHARGING_DATA.USER_CITY, userDTO.getCity())
-                            .set(LIVE_CHARGING_DATA.USER_STATE, userDTO.getState())
-                            .set(LIVE_CHARGING_DATA.USER_COUNTRY, userDTO.getCountry())
-                            .set(LIVE_CHARGING_DATA.USER_ADDRESS_ONE, userDTO.getAddressOne())
-
-                            // Vehicle info
-                            .set(LIVE_CHARGING_DATA.CHARGING_VEHICLE_NAME, vehicleDTO != null ? vehicleDTO.getName() : null)
-                            .set(LIVE_CHARGING_DATA.CHARGING_VEHICLE_NUMBER, vehicleDTO != null ? vehicleDTO.getNumber() : null)
-                            .set(LIVE_CHARGING_DATA.CHARGING_VEHICLE_MODEL, vehicleDTO != null ? vehicleDTO.getModel() : null)
-                            .set(LIVE_CHARGING_DATA.CHARGING_VEHICLE_TYPE, vehicleDTO != null ? vehicleDTO.getType() : null)
-                            .set(LIVE_CHARGING_DATA.CHARGING_VEHICLE_IMG_URL, vehicleDTO != null ? vehicleDTO.getImgUrl() : null)
-                            .set(LIVE_CHARGING_DATA.CHARGING_VEHICLE_HUB_IMAGE, vehicleDTO != null ? vehicleDTO.getHubImage() : null)
-                            .onDuplicateKeyIgnore()
-                            .execute();
-
-                    log.info("Inserted live charging row txId={}", transactionId);
-                } catch (Exception e) {
-                    log.error("Failed insert for txId=" + transactionId, e);
-                }
-            });
-
+            log.info("Inserted live charging row txId={}", transactionId);
         } catch (Exception e) {
-            System.out.println(e.getMessage());
-            log.error("Error in liveChargingData()"+ e.getMessage());
+            log.error("Failed insert for txId=" + transactionId, e);
         }
     }
+
 
     private UserDTO guestUser() {
         UserDTO u = new UserDTO();

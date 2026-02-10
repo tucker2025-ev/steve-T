@@ -23,7 +23,6 @@ import de.rwth.idsg.steve.repository.TransactionRepository;
 import de.rwth.idsg.steve.repository.dto.Transaction;
 import de.rwth.idsg.steve.service.dto.Tariff;
 import de.rwth.idsg.steve.service.dto.TariffResponse;
-import de.rwth.idsg.steve.service.dto.TariffSlice;
 import de.rwth.idsg.steve.web.controller.PaymentController;
 import de.rwth.idsg.steve.web.dto.TransactionQueryForm;
 import lombok.extern.slf4j.Slf4j;
@@ -38,10 +37,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
-
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 import static jooq.steve.db.Tables.*;
