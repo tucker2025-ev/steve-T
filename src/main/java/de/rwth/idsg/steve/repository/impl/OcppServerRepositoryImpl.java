@@ -69,8 +69,7 @@ import static jooq.steve.db.tables.ConnectorStatus.CONNECTOR_STATUS;
 import static jooq.steve.db.tables.TransactionStart.TRANSACTION_START;
 import static jooq.steve.db.tables.TransactionStop.TRANSACTION_STOP;
 import static jooq.steve.db.tables.TransactionStopFailed.TRANSACTION_STOP_FAILED;
-import static jooq.steve.db2.Tables.LIVE_CHARGING_DATA;
-import static jooq.steve.db2.Tables.WALLET_TRACK;
+import static jooq.steve.db2.Tables.*;
 
 /**
  * This class has methods for database access that are used by the OCPP service.
@@ -404,6 +403,7 @@ public class OcppServerRepositoryImpl implements OcppServerRepository {
                 updateQrPaymentActiveTransaction(p.getTransactionId(), retrieveChargedAmount(p.getTransactionId()));
             } else {
                 updateActiveTransaction(p.getTransactionId(), retrieveChargedAmount(p.getTransactionId()));
+                closeSettlementTransaction(p.getTransactionId(), retrieveChargedAmount(p.getTransactionId()));
             }
 
             if (chargerFeeExceptUserService.testChargerFeeExceptUser(idTag, p.getChargeBoxId())) {
@@ -444,6 +444,15 @@ public class OcppServerRepositoryImpl implements OcppServerRepository {
                 .execute();
     }
 
+    private void closeSettlementTransaction(Integer transactionId, double consumedAMount) {
+
+        secondary.update(WALLET_TRACK_SETTLEMENT)
+                .set(WALLET_TRACK_SETTLEMENT.IS_ACTIVE_TRANSACTION, false)
+                .set(WALLET_TRACK_SETTLEMENT.TOTAL_CONSUMED_AMOUNT, round2(consumedAMount))
+                .where(WALLET_TRACK_SETTLEMENT.TRANSACTION_ID.eq(transactionId))
+                .and(WALLET_TRACK_SETTLEMENT.IS_ACTIVE_TRANSACTION.eq(true))
+                .execute();
+    }
 
     private double retrieveChargedAmount(final Integer transaction) {
         return secondary
@@ -458,14 +467,12 @@ public class OcppServerRepositoryImpl implements OcppServerRepository {
 
     }
 
-
     private void updateBalanceAmount(final String rrnId, final double balanceAmount) {
         ctx.update(PAYMENT_REQUEST)
                 .set(PAYMENT_REQUEST.PAY_BALANCE, balanceAmount)
                 .where(PAYMENT_REQUEST.RRNID.eq(rrnId))
                 .execute();
     }
-
 
     // -------------------------------------------------------------------------
     // Helpers

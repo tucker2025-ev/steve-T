@@ -46,7 +46,7 @@ public class LiveTransactionDTO {
     @JsonProperty("rank")
     private String rank;
 
-    @JsonProperty("transaction count")
+    @JsonProperty("transaction_count")
     private Integer transactionCount;
 
     @JsonProperty("name")
@@ -106,13 +106,13 @@ public class LiveTransactionDTO {
 
     // LIVE ELECTRICAL
     @JsonProperty("voltage")
-    private double voltage;
+    private String voltage;
 
     @JsonProperty("current")
-    private double current;
+    private String current;
 
     @JsonProperty("power")
-    private double power;
+    private String power;
 
     // BILLING
     @JsonProperty("fare_breakdown")
@@ -141,7 +141,7 @@ public class LiveTransactionDTO {
     private String startTime;
 
     @JsonProperty("total_time")
-    private double totalTime;
+    private String totalTime;
 
     @JsonProperty("time_consumed")
     private String timeConsumed;

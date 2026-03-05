@@ -132,9 +132,9 @@ public class LiveTransactionService {
             // ---------------- METRICS ----------------
             String startSoc = safe(first, "latest_soc", "0");
             String stopSoc  = safe(last, "latest_soc", "0");
-            double voltage  = getDouble(last, "last_voltage");
-            double current  = getDouble(last, "last_current");
-            double power    = getDouble(last, "last_power");
+            String voltage  = String.valueOf(getDouble(last, "last_voltage"));
+            String current  = String.valueOf(getDouble(last, "last_current"));
+            String power    = String.valueOf(getDouble(last, "last_power"));
 
             // ---------------- FARE BREAKDOWN ----------------
             List<FareBreakdownDTO> fareBreakdown = new ArrayList<>();
@@ -241,7 +241,7 @@ public class LiveTransactionService {
             dto.setStartTime(startTs != null ? new DateTime(startTs.getTime(), DateTimeZone.forID("Asia/Kolkata"))
                     .toString("yyyy-MM-dd HH:mm:ss") : "");
             dto.setTimeConsumed(formatTime(totalSeconds));
-            dto.setTotalTime(totalSeconds);
+            dto.setTotalTime(String.valueOf(totalSeconds));
             dto.setUnitFare(unitFareStr);
 
             list.add(dto);
@@ -253,8 +253,17 @@ public class LiveTransactionService {
     // ------------------ HELPERS ------------------
     private String safe(Record r, String col, String defaultVal) {
         if (r == null) return defaultVal;
+
         Object v = r.get(col);
-        return v != null ? v.toString() : defaultVal;
+        if (v == null) return defaultVal;
+
+        String str = v.toString();
+
+        if (str.endsWith(".0")) {
+            str = str.substring(0, str.length() - 2);
+        }
+
+        return str;
     }
 
     private double getDouble(Record r, String col) {

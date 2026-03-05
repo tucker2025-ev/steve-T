@@ -84,15 +84,22 @@ public class PaymentController {
     @Qualifier("php")
     private DSLContext php;
 
-    private static final Table<?> CHARGE_POINT_VIEW =
-            DSL.table("bigtot_cms.v_station_charger_details");
+    @Autowired
+    @Qualifier("secondary")
+    private DSLContext secondary;
+
+    private static final Table<?> CHARGE_POINT_VIEW = DSL.table("bigtot_cms.v_station_charger_details");
     private static final Field<String> CHARGER_ID = DSL.field("charger_id", String.class);
     private static final Field<String> CHARGER_TYPE = DSL.field("charger_type", String.class);
     private static final Field<String> CONNECTOR_ID = DSL.field("con_no", String.class);
 
+    private static final Table<?> LIVE_CHARGING_DATA = DSL.table("ev_history.live_charging_data");
+    private static final Field<Double> USER_WALLET_AMOUNT = DSL.field("user_wallet_amount", Double.class);
+    private static final Field<String> LCD_CHARGER_ID = DSL.field("charge_box_id", String.class);
+    private static final Field<Integer> LCD_CONNECTOR_ID = DSL.field("connector_id", Integer.class);
+    private static final Field<String> LCD_ID_TAG = DSL.field("id_tag", String.class);
 
     ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
-
 
     @PostMapping("/payments")
     public PaymentStartResponse createPayment(@RequestBody PaymentRequest request) {
@@ -103,6 +110,7 @@ public class PaymentController {
             form.setIdTag(request.getRrnId());
             ocppTagRepositoryImpl.addOcppTag(form);
 
+            System.out.println("RRNID: " + request.getRrnId());
 
             try {
                 boolean started = start(request).get();
@@ -132,7 +140,6 @@ public class PaymentController {
         }
     }
 
-
     private void insertPayment(final PaymentRequest paymentRequest, final boolean isStarted) {
         dslContext.insertInto(PAYMENT_REQUEST)
                 .set(PAYMENT_REQUEST.PAY_ID, paymentRequest.getPayId())
@@ -144,6 +151,8 @@ public class PaymentController {
                 .set(PAYMENT_REQUEST.RRNID, paymentRequest.getRrnId())
                 .set(PAYMENT_REQUEST.UPIID, paymentRequest.getUpiId())
                 .execute();
+
+        updateLiveWallet(paymentRequest);
     }
 
     private boolean isAlreadyIdTag(final String idTag) {
@@ -152,6 +161,18 @@ public class PaymentController {
                         .from(OCPP_TAG)
                         .where(OCPP_TAG.ID_TAG.eq(idTag))
         );
+    }
+
+    private void updateLiveWallet(final PaymentRequest paymentRequest) {
+
+        int updated = secondary.update(LIVE_CHARGING_DATA)
+                .set(USER_WALLET_AMOUNT, paymentRequest.getAmount())
+                .where(LCD_ID_TAG.like(paymentRequest.getRrnId() + "%"))
+                .execute();
+
+        System.out.println("USER_WALLET_AMOUNT : " + paymentRequest.getAmount());
+
+        System.out.println("Updated : " + updated);
     }
 
     public CompletableFuture<Boolean> start(final PaymentRequest request) {
@@ -170,7 +191,6 @@ public class PaymentController {
             params.setConnectorId(request.getConnectorId());
         }
 
-
         ChargePointSelect select = new ChargePointSelect(OcppTransport.JSON, request.getChargerId());
         RemoteStartTransactionTask task = new RemoteStartTransactionTask(OcppVersion.V_16, params);
 
@@ -184,6 +204,8 @@ public class PaymentController {
 
             @Override
             public void success(String cbId, String response) {
+
+                System.out.println("Response : " + response);
                 timeout.cancel(false);
 
                 if ("Accepted".equalsIgnoreCase(response)) {
@@ -209,13 +231,10 @@ public class PaymentController {
         chargePointService16Invoker.remoteStartTransaction(select, task, request.getPayId(), request.getConnectorId());
 
         return future;
-
     }
 
     @PostMapping("/upi-stop")
     public CompletableFuture<PaymentStartResponse> upiStopTransaction(@RequestParam Integer transactionId) {
-
-
         TransactionDetails transactionDetails = transactionRepository.getDetails(transactionId);
 
         Transaction transaction = transactionDetails.getTransaction();

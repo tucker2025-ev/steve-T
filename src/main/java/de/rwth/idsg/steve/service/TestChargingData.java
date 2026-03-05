@@ -212,7 +212,6 @@ public class TestChargingData {
         }
     }
 
-
     private UserDTO guestUser() {
         UserDTO u = new UserDTO();
         u.setName("Guest User");
@@ -237,6 +236,21 @@ public class TestChargingData {
         v.setImgUrl(null);
         v.setHubImage(null);
         return v;
+    }
+
+    public String isType6Charger(final String chargeBoxId, final Integer connectorId) {
+        try {
+            return php
+                    .select(CHARGER_TYPE)
+                    .from(CHARGE_POINT_VIEW)
+                    .where(CHARGER_ID.eq(chargeBoxId))
+                    .and(CONNECTOR_ID.eq(String.valueOf(connectorId)))
+                    .fetchOptional(CHARGER_TYPE)
+                    .orElse(null);   // No record found
+        } catch (Exception ex) {
+            log.error("Failed to fetch charger");
+            return null;
+        }
     }
 
 }

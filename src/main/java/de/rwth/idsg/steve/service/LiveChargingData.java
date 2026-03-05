@@ -100,7 +100,7 @@ public class LiveChargingData {
                     chargeBoxId, connectorId, transactionId, idTag);
 
             /* ===============================
-             * 1️⃣ Charge Point (MANDATORY)
+             * Charge Point (MANDATORY)
              * =============================== */
             ChargePointDTO chargePointDTO = php
                     .select(
@@ -114,13 +114,13 @@ public class LiveChargingData {
                     .fetchOneInto(ChargePointDTO.class);
 
             if (chargePointDTO == null) {
-                log.error("❌ ChargePoint not found for chargeBoxId={}, connectorId={}",
+                log.error("ChargePoint not found for chargeBoxId={}, connectorId={}",
                         chargeBoxId, connectorId);
                 return;
             }
 
             /* ===============================
-             * 2️⃣ Users (OPTIONAL)
+             * Users (OPTIONAL)
              * =============================== */
             List<UserDTO> users = php
                     .select(NAME, CMS_ID, EMAIL, MOBILE_NUMBER, WALLET_AMOUNT,
@@ -137,7 +137,7 @@ public class LiveChargingData {
             log.info("User records found: {}", users.size());
 
             /* ===============================
-             * 3️⃣ Vehicles (OPTIONAL)
+             * Vehicles (OPTIONAL)
              * =============================== */
             List<VehileDTO> vehicles = php
                     .select(VEHICLE_NAME, VEHICLE_NUMBER, VEHICLE_MODEL,
@@ -154,7 +154,7 @@ public class LiveChargingData {
             log.info("Vehicle records found: {}", vehicles.size());
 
             /* ===============================
-             * 4️⃣ INSERT (NULL SAFE)
+             * INSERT (NULL SAFE)
              * =============================== */
             secondary.insertInto(LIVE_CHARGING_DATA)
                     // Core
@@ -199,10 +199,10 @@ public class LiveChargingData {
 
                     .execute();
 
-            log.info("✅ LiveChargingData inserted successfully for txId={}", transactionId);
+            log.info("LiveChargingData inserted successfully for txId={}", transactionId);
 
         } catch (Exception e) {
-            log.error("❌ Error in liveChargingData()", e);
+            log.error("Error in liveChargingData()", e);
         }
     }
 
@@ -221,6 +221,5 @@ public class LiveChargingData {
             return null;
         }
     }
-
 
 }

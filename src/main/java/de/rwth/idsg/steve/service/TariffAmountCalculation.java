@@ -45,6 +45,7 @@ import static jooq.steve.db.tables.Connector.CONNECTOR;
 import static jooq.steve.db.tables.TransactionMeterValues.TRANSACTION_METER_VALUES;
 import static jooq.steve.db.tables.TransactionStart.TRANSACTION_START;
 import static jooq.steve.db2.Tables.WALLET_TRACK;
+import static jooq.steve.db2.Tables.WALLET_TRACK_SETTLEMENT_NEW;
 
 @Slf4j
 @Service
@@ -65,6 +66,8 @@ public class TariffAmountCalculation {
     private TransactionRepository transactionRepository;
     @Autowired
     private ChargerFeeExceptUserService chargerFeeExceptUserService;
+    @Autowired
+    private WalletTrackSettlementService walletTrackSettlementService;
 
     @Autowired
     private PaymentController paymentController;
@@ -95,7 +98,6 @@ public class TariffAmountCalculation {
                                   final Integer transactionId,
                                   final Integer connectorPk) {
 
-
         if (check(lastEnergy, chargeBoxId, transactionId, connectorPk)) {
             return;
         }
@@ -107,11 +109,15 @@ public class TariffAmountCalculation {
 
         double baseCost = consumedEnergy * unitFare;
         double gstCost = baseCost * 0.18;
+        double gstWithUnitFare = unitFare * 0.18;
+        gstWithUnitFare = Math.round(gstWithUnitFare * 100.0) / 100.0;
         double consumedAmount = baseCost + gstCost;
+        consumedAmount = Math.round(consumedAmount * 100.0) / 100.0;
 
         double previousTotal = previousConsumedAmount(transactionId);
         double updateConsumedAmount = previousTotal + consumedAmount;
         double totalConsumedAmount = previousTotalConsumedAmount(transactionId) + consumedAmount;
+        totalConsumedAmount = Math.round(totalConsumedAmount * 100.0) / 100.0;
 
         if (isIdTagIsAlreadyTransaction(idTag)) {
             if (isQrPaymentUser(idTag)) {
@@ -136,7 +142,6 @@ public class TariffAmountCalculation {
                 totalConsumedAmountMultiTransaction += previousTotalConsumedAmount(txId);
             }
 
-
             if ((totalConsumedAmountMultiTransaction + 30) >= walletBalance) {
                 List<Integer> activeTxId = getActiveTransactionIds(idTag);
                 for (Integer txId : activeTxId) {
@@ -144,10 +149,7 @@ public class TariffAmountCalculation {
                     stopTransaction.manuallyStopTransaction(chargerId, txId, "Low Wallet");
                 }
             }
-
-
         }
-
 
         if (isAnotherTariff(transactionId, unitFare)) {
             log.info("Tariff changed → insert new tariff record : consumedAmount = " + consumedAmount + " , totalConsumedAmount = " + totalConsumedAmount);
@@ -165,6 +167,8 @@ public class TariffAmountCalculation {
                     latestTimestamp
             );
 
+            walletTrackSettlementService.insertChargerTariffAmountSettlementService(transactionId,previousEnergy,lastEnergy,idTag,unitFare,gstWithUnitFare,walletBalance,consumedEnergy,consumedAmount,totalConsumedAmount,latestTimestamp,chargeBoxId,connectorPk);
+
         } else {
             log.info("Tariff same  update existing tariff record : consumedAmount = " + consumedAmount + " , totalConsumedAmount = " + totalConsumedAmount);
 
@@ -176,6 +180,8 @@ public class TariffAmountCalculation {
                     totalConsumedAmount,
                     latestTimestamp, walletBalance
             );
+
+            walletTrackSettlementService.updateSettlementService(transactionId, unitFare, lastEnergy, updateConsumedAmount, totalConsumedAmount,latestTimestamp, walletBalance);
         }
     }
 
@@ -192,7 +198,6 @@ public class TariffAmountCalculation {
                 .where(CONNECTOR.CONNECTOR_PK.eq(connectorPk))
                 .fetchOne(CONNECTOR.CHARGE_BOX_ID);
     }
-
 
     private double previousConsumedAmount(final Integer transactionId) {
         Double consumed = dslContext
@@ -239,6 +244,7 @@ public class TariffAmountCalculation {
                 .orderBy(WALLET_TRACK.START_TIMESTAMP.desc())
                 .limit(1)
                 .execute();
+
     }
 
     private double getStartEnergy(final Integer transactionId) {
@@ -252,7 +258,6 @@ public class TariffAmountCalculation {
 
         return startEnergy != null ? startEnergy : 0.0;
     }
-
 
     /**
      * Insert new record when tariff changes
@@ -467,7 +472,6 @@ public class TariffAmountCalculation {
         }
         return false;
     }
-
 
     private double retrievePreviousTransactionLastEnergy(Integer connectorPk) {
 

@@ -53,8 +53,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 import static jooq.steve.db.Tables.*;
-import static jooq.steve.db2.Tables.LIVE_CHARGING_DATA;
-import static jooq.steve.db2.Tables.WALLET_TRACK;
+import static jooq.steve.db2.Tables.*;
 
 
 @Slf4j
@@ -643,7 +642,7 @@ public class TestAppService {
             final Integer connectorId) {
 
         return "TYPE6".equalsIgnoreCase(
-                liveChargingData.isType6Charger(
+                testChargingData.isType6Charger(
                         chargeBoxId, connectorId));
     }
 
