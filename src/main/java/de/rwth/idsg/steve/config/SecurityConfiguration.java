@@ -135,6 +135,7 @@ public class SecurityConfiguration {
                 .and()
                 .addFilter(new ApiKeyFilter())
                 .authorizeRequests()
+                .antMatchers("/api/settlement/**").permitAll()
                 .anyRequest()
                 .authenticated()
                 .and()

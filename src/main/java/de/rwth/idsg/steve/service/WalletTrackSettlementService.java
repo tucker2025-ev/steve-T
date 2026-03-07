@@ -19,8 +19,11 @@
 package de.rwth.idsg.steve.service;
 
 import de.rwth.idsg.steve.service.dto.ChargerStationDTO;
+import de.rwth.idsg.steve.web.dto.WalletSettlementDTO;
+import jooq.steve.db2.tables.records.WalletTrackSettlementRecord;
 import lombok.extern.slf4j.Slf4j;
 import org.joda.time.DateTime;
+import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Table;
@@ -29,6 +32,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.List;
+
+import static jooq.steve.db.Tables.CONNECTOR;
 import static jooq.steve.db2.tables.WalletTrackSettlement.WALLET_TRACK_SETTLEMENT;
 
 @Slf4j
@@ -54,6 +63,118 @@ public class WalletTrackSettlementService {
     private static final Field<String> CPO_ID = DSL.field("cpo_id", String.class);
     private static final Field<String> STATION_CITY = DSL.field("station_city", String.class);
     private static final Field<String> STATION_STATE = DSL.field("station_state", String.class);
+
+    public List<WalletSettlementDTO> getSettlementRecords(String stationId,
+                                                                  String cpoId,
+                                                                  String chargerQrCode,
+                                                                  Integer transactionId,
+                                                                  String startTimestamp,
+                                                                  String stopTimestamp) {
+
+        Condition condition = DSL.noCondition();
+
+        if (startTimestamp != null && stopTimestamp != null &&
+                !startTimestamp.isEmpty() && !stopTimestamp.isEmpty()) {
+
+            LocalDateTime startLocal = LocalDateTime.parse(startTimestamp);
+            LocalDateTime endLocal = LocalDateTime.parse(stopTimestamp);
+
+            org.joda.time.DateTime jodaStart =
+                    new org.joda.time.DateTime(
+                            startLocal.atZone(ZoneId.of("Asia/Kolkata")).toInstant().toEpochMilli()
+                    );
+
+            org.joda.time.DateTime jodaEnd =
+                    new org.joda.time.DateTime(
+                            endLocal.atZone(ZoneId.of("Asia/Kolkata")).toInstant().toEpochMilli()
+                    );
+
+            condition = condition.and(
+                    WALLET_TRACK_SETTLEMENT.START_TIMESTAMP.between(jodaStart, jodaEnd)
+            );
+        }
+
+        if (stationId != null && !stationId.isEmpty()) {
+            condition = condition.and(WALLET_TRACK_SETTLEMENT.STATION_ID.eq(stationId));
+        }
+
+        if (cpoId != null && !cpoId.isEmpty()) {
+            condition = condition.and(WALLET_TRACK_SETTLEMENT.CPO_ID.eq(cpoId));
+        }
+
+        if (chargerQrCode != null && !chargerQrCode.isEmpty()) {
+            condition = condition.and(WALLET_TRACK_SETTLEMENT.CHARGER_QR_CODE.eq(chargerQrCode));
+        }
+
+        if (transactionId != null) {
+            condition = condition.and(WALLET_TRACK_SETTLEMENT.TRANSACTION_ID.eq(transactionId));
+        }
+
+        return secondary
+                .select(
+                        WALLET_TRACK_SETTLEMENT.ID,
+                        WALLET_TRACK_SETTLEMENT.TRANSACTION_ID,
+                        WALLET_TRACK_SETTLEMENT.STATION_ID,
+                        WALLET_TRACK_SETTLEMENT.CPO_ID,
+                        WALLET_TRACK_SETTLEMENT.STATION_NAME,
+                        WALLET_TRACK_SETTLEMENT.STATION_CITY,
+                        WALLET_TRACK_SETTLEMENT.STATION_STATE,
+                        WALLET_TRACK_SETTLEMENT.ID_TAG,
+                        WALLET_TRACK_SETTLEMENT.CHARGER_ID,
+                        WALLET_TRACK_SETTLEMENT.CHARGER_QR_CODE,
+                        WALLET_TRACK_SETTLEMENT.CON_NO,
+                        WALLET_TRACK_SETTLEMENT.START_ENERGY,
+                        WALLET_TRACK_SETTLEMENT.TARIFF_AMOUNT,
+                        WALLET_TRACK_SETTLEMENT.GST_WITH_TARIFF_AMOUNT,
+                        WALLET_TRACK_SETTLEMENT.LAST_ENERGY,
+                        WALLET_TRACK_SETTLEMENT.WALLET_AMOUNT,
+                        WALLET_TRACK_SETTLEMENT.CONSUMED_ENERGY,
+                        WALLET_TRACK_SETTLEMENT.CONSUMED_AMOUNT,
+                        WALLET_TRACK_SETTLEMENT.TOTAL_CONSUMED_AMOUNT,
+                        WALLET_TRACK_SETTLEMENT.START_TIMESTAMP,
+                        WALLET_TRACK_SETTLEMENT.STOP_TIMESTAMP,
+                        WALLET_TRACK_SETTLEMENT.IS_ACTIVE_TRANSACTION,
+                        WALLET_TRACK_SETTLEMENT.DEALER_UNIT_COST,
+                        WALLET_TRACK_SETTLEMENT.DEALER_TOTAL_AMOUNT,
+                        WALLET_TRACK_SETTLEMENT.CUSTOMER_SHARE_AMOUNT,
+                        WALLET_TRACK_SETTLEMENT.TOTAL_SHARE_AMOUNT
+                )
+                .from(WALLET_TRACK_SETTLEMENT)
+                .where(condition)
+                .orderBy(WALLET_TRACK_SETTLEMENT.START_TIMESTAMP.desc())
+                .limit(100)
+                .fetch(record -> {
+
+                    WalletSettlementDTO dto = record.into(WalletSettlementDTO.class);
+
+                    org.joda.time.DateTime start = record.get(WALLET_TRACK_SETTLEMENT.START_TIMESTAMP);
+                    org.joda.time.DateTime stop = record.get(WALLET_TRACK_SETTLEMENT.STOP_TIMESTAMP);
+
+                    DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSXXX");
+
+                    if (start != null) {
+
+                        String istTime = start.toGregorianCalendar()
+                                        .toZonedDateTime()
+                                        .withZoneSameInstant(ZoneId.of("Asia/Kolkata"))
+                                        .format(formatter);
+
+                        dto.setStartTimestamp(istTime);
+                    }
+
+                    if (stop != null) {
+
+                        String istTime = stop.toGregorianCalendar()
+                                        .toZonedDateTime()
+                                        .withZoneSameInstant(ZoneId.of("Asia/Kolkata"))
+                                        .format(formatter);
+
+                        dto.setStopTimestamp(istTime);
+                    }
+
+                    return dto;
+                });
+    }
 
    public void updateSettlementService(final Integer transactionId, final double unitFare,
                                  final double lastEnergy,
@@ -100,21 +221,28 @@ public class WalletTrackSettlementService {
                                                                      final double totalConsumedAmount,
                                                                      final DateTime startTime,final String chargerId,final Integer connectorNo) {
 
+        Integer connectorId = secondary
+                .select(CONNECTOR.CONNECTOR_ID)
+                .from(CONNECTOR)
+                .where(CONNECTOR.CHARGE_BOX_ID.eq(chargerId))
+                .and(CONNECTOR.CONNECTOR_PK.eq(connectorNo))
+                .fetchOneInto(Integer.class);
+
         try {
             ChargerStationDTO chargerStationDTO = php
                     .select(
                             CHARGER_ID.as("chargerId"),
                             CHARGER_QR_CODE.as("chargerQrCode"),
                             CONNECTOR_NO.as("connectorNo"),
-                            STATION_ID,
-                            STATION_NAME,
-                            CPO_ID,
-                            STATION_CITY,
-                            STATION_STATE
+                            STATION_ID.as("stationId"),
+                            STATION_NAME.as("stationName"),
+                            CPO_ID.as("cpoId"),
+                            STATION_CITY.as("stationCity"),
+                            STATION_STATE.as("stationState")
                     )
                     .from(CHARGE_POINT_VIEW)
                     .where(DSL.upper(CHARGER_ID).eq(chargerId.trim().toUpperCase()))
-                    .and(CONNECTOR_NO.eq(connectorNo))
+                    .and(CONNECTOR_NO.eq(connectorId))
                     .fetchOneInto(ChargerStationDTO.class);
 
             secondary.insertInto(WALLET_TRACK_SETTLEMENT)
@@ -142,9 +270,9 @@ public class WalletTrackSettlementService {
                     .execute();
 
         } catch (Exception e) {
+            System.out.println("Exception : " + e.getMessage());
             log.error("Error inserting tariff record for tx {}: {}", transactionId, e.getMessage(), e);
         }
     }
-
 
 }
